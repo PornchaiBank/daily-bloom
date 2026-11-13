@@ -14,7 +14,7 @@ function page(id){if(saving)return;currentPage=id;for(const p of ['home','record
 function totals(r){let sold=r.made-r.left,revenue=Math.round(sold*r.price*100)/100,cost=Math.round((r.cost+r.extra)*100)/100;return{sold,revenue,cost,profit:Math.round((revenue-cost)*100)/100}}
 function sum(rs){return rs.reduce((s,r)=>{let t=totals(r);for(const k of ['revenue','cost','profit'])s[k]+=t[k];s.left+=r.left;s.sold+=t.sold;return s},{revenue:0,cost:0,profit:0,left:0,sold:0})}
 function dateText(d){return new Intl.DateTimeFormat('th-TH',{day:'numeric',month:'short',year:'2-digit'}).format(new Date(d+'T12:00:00'))}
-function cards(rs,dates=false){return rs.length?rs.map(r=>{let t=totals(r);return `<article class="saleitem"><div class="salehead"><span class="flowerbubble">✿</span><div><h3>${esc(r.product)}</h3><small>${dates?esc(dateText(r.date)):'ขายได้ '+t.sold+' กำ · เหลือ '+r.left+' กำ'}</small></div><div class="saleprofit ${t.profit<0?'negative':'positive'}"><small>${t.profit<0?'ขาดทุน':t.profit===0?'เท่าทุน':'กำไร'}</small><b>${signed(t.profit)}</b></div></div><div class="salefoot"><span>ต้นทุน ${money(t.cost)} · ขาย ${money(t.revenue)} บาท</span><button class="textbtn" data-edit="${esc(r.id)}">แก้ไข ↗</button></div>${r.memo?'<p class="hint">'+esc(r.memo)+'</p>':''}</article>`}).join(''):'<div class="empty">ยังไม่มีรายการในวันที่เลือก<br>กด “บันทึกยอดขาย” เพื่อเริ่มต้นได้เลย</div>'}
+function cards(rs,dates=false){return rs.length?rs.map(r=>{let t=totals(r);return `<article class="saleitem"><div class="salehead"><span class="flowerbubble">✿</span><div><h3>${esc(r.product)}</h3><small>${dates?esc(dateText(r.date)):'ขายได้ '+t.sold+' กำ · เหลือ '+r.left+' กำ'}</small></div><div class="saleprofit ${t.profit<0?'negative':'positive'}"><small>${t.profit<0?'ขาดทุน':t.profit===0?'เท่าทุน':'กำไร'}</small><b>${signed(t.profit)}</b></div></div><div class="salefoot"><span>ต้นทุน ${money(t.cost)} · ขาย ${money(t.revenue)} บาท</span><div class="saleactions"><button class="textbtn" data-edit="${esc(r.id)}">แก้ไข ↗</button><button type="button" class="deletebtn" data-delete="${esc(r.id)}" aria-label="ลบ ${esc(r.product)}">ลบ</button></div></div>${r.memo?'<p class="hint">'+esc(r.memo)+'</p>':''}</article>`}).join(''):'<div class="empty">ยังไม่มีรายการในวันที่เลือก<br>กด “บันทึกยอดขาย” เพื่อเริ่มต้นได้เลย</div>'}
 function renderHome(){const rs=rows.filter(r=>r.date===$('day').value),s=sum(rs);$('overview').innerHTML=`<div class="profitcard ${s.profit<0?'loss':''}"><span>${s.profit<0?'ขาดทุนรวมวันนี้':'กำไรสุทธิวันนี้'}</span><strong>${signed(s.profit)}<small>บาท</small></strong><div class="profitdetails"><div><span>ยอดขายทั้งหมด</span><b>${money(s.revenue)}</b></div><div><span>ต้นทุนรวม</span><b>${money(s.cost)}</b></div></div></div><div class="ministats"><div class="ministat"><span class="symbol">↗</span><div><small>ขายได้ทั้งหมด</small><b>${s.sold} กำ</b></div></div><div class="ministat"><span class="symbol">❀</span><div><small>เหลือขายไม่หมด</small><b>${s.left} กำ</b></div></div></div>`;$('count').textContent=rs.length+' รายการ';$('todaylist').innerHTML=cards(rs)}
 function renderHistory(){const from=$('from').value,to=$('to').value;if(from&&to&&from>to){$('historysum').innerHTML='<div class="formerror">วันที่เริ่มต้องไม่มากกว่าวันที่สิ้นสุด</div>';$('historylist').innerHTML='';return}const rs=rows.filter(r=>(!from||r.date>=from)&&(!to||r.date<=to)).sort((a,b)=>b.date.localeCompare(a.date));let s=sum(rs);$('historysum').innerHTML=`<div class="historysummary"><span>${rs.length} รายการ<br>กำไร / ขาดทุนรวม</span><strong class="${s.profit<0?'negative':'positive'}">${signed(s.profit)} ฿</strong></div>`;$('historylist').innerHTML=cards(rs,true)}
 function newRecord(){if(saving)return;dirty=false;editId=null;editVersion=null;draftId=uid();$('saleform').reset();$('calculation').innerHTML='';$('entrydate').value=$('day').value||today;$('optional').open=false;$('formtitle').textContent='บันทึกยอดขาย';$('savebtn').textContent='✓ บันทึกรายการทดลอง';document.querySelectorAll('.chips button').forEach(b=>b.classList.remove('selected'));setStep(1);cloudUi();page('record')}
@@ -38,3 +38,30 @@ catch(e){showCloudError(e)}finally{saving=false;controls.forEach(el=>el.disabled
 $('day').addEventListener('change',renderHome);$('from').addEventListener('change',renderHistory);$('to').addEventListener('change',renderHistory);document.addEventListener('click',e=>{const b=e.target.closest('[data-edit]');if(b)editRecord(b.dataset.edit)});
 
 $('loginstatus').textContent=WandeeCloud.configured()?'ตั้งค่าแล้ว • กดเข้าสู่ระบบ Google เพื่อเชื่อมต่อ':'ยังไม่ได้ตั้งค่า Google Sheets';
+
+let deleteTarget=null;
+function openDelete(record,version=record?._version||null,recovering=false){
+ if(saving||!record)return;
+ deleteTarget={record:{...record},version};
+ $('deleteProduct').textContent=record.product+' · '+dateText(record.date);
+ $('deleteAmount').textContent='ยอดขาย '+money(totals(record).revenue)+' บาท';
+ $('deleteMessage').textContent=recovering?'มีการลบที่ยังยืนยันผลไม่ได้ กดยืนยันเพื่อตรวจสอบและดำเนินการต่อ':'รายการนี้จะถูกนำออกจากหน้าร้าน ประวัติ และยอดรวม';
+ $('deleteError').hidden=true;
+ if(!$('deleteDialog').open)$('deleteDialog').showModal();
+}
+function closeDelete(){if(saving)return;$('deleteDialog').close();deleteTarget=null;}
+$('deleteDialog').addEventListener('cancel',e=>{if(saving)e.preventDefault();else deleteTarget=null});
+async function confirmDelete(){
+ if(saving||!deleteTarget)return;
+ const {record,version}=deleteTarget;
+ if(appMode==='demo'&&storageFailed){$('deleteError').textContent='อ่านข้อมูลเดิมไม่ได้ จึงยังไม่ลบข้อมูล';$('deleteError').hidden=false;return}
+ saving=true;$('confirmDelete').disabled=true;$('cancelDelete').disabled=true;$('confirmDelete').textContent='กำลังลบ…';$('deleteError').hidden=true;
+ try{
+  if(appMode==='cloud'){const clean={...record};delete clean._version;rows=await WandeeCloud.save(clean,version,true)}
+  else {const updated=rows.filter(r=>r.id!==record.id);localStorage.setItem(key,JSON.stringify(updated));rows=updated;}
+  if(editId===record.id){dirty=false;editId=null;editVersion=null;draftId=null;$('saleform').reset();}
+  $('deleteDialog').close();deleteTarget=null;renderHome();renderHistory();toast('ลบรายการแล้ว ✓ อัปเดตยอดรวมเรียบร้อย');
+ }catch(e){$('deleteError').textContent=e.message||'ลบไม่สำเร็จ กรุณาลองใหม่';$('deleteError').hidden=false;}
+ finally{saving=false;$('confirmDelete').disabled=false;$('cancelDelete').disabled=false;$('confirmDelete').textContent='ยืนยันลบรายการ';cloudUi();}
+}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-delete]');if(b)openDelete(rows.find(r=>r.id===b.dataset.delete))});

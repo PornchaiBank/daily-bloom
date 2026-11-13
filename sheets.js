@@ -31,7 +31,7 @@ const WandeeCloud=(()=>{
    if(!r.id||!r._version||!/^\d{4}-\d{2}-\d{2}$/.test(r.date)||Number.isNaN(Date.parse(r.date+'T12:00:00Z'))||!r.product||[r.cost,r.extra,r.made,r.price,r.left].some(x=>!Number.isFinite(x)||x<0)||r.made<1||r.left>r.made||!Number.isInteger(r.made)||!Number.isInteger(r.left))throw Error('พบรายการในชีตที่ไม่ถูกต้อง กรุณาตรวจข้อมูลก่อนใช้ยอดรวม');
    latest.set(r.id,r);events.add(r._version);
   }
-  return{rows:[...latest.values()],events};
+  return{rows:[...latest.values()].filter(r=>!r._version.startsWith('deleted:')),events,latest};
  }
  async function read(){if(!ready)throw Error('ยังไม่พร้อมอ่านข้อมูล กรุณาเชื่อมต่อ Google Sheets');const d=await api('/values/'+encodeURIComponent("'"+tabName+"'!A1:Q10001")+'?valueRenderOption=UNFORMATTED_VALUE');return parseRows(d.values)}
  function authorize(){
@@ -62,19 +62,21 @@ const WandeeCloud=(()=>{
   }finally{requestBusy=false}
  }
  function pendingKey(){return 'wandee-pending-'+config.sheetId}
- async function save(record,baseVersion){
+ async function save(record,baseVersion,deleting=false){
   if(!ready)throw Error('กรุณาเชื่อมต่อ Google Sheets ก่อนบันทึก');
   let pending=null;try{pending=JSON.parse(sessionStorage.getItem(pendingKey())||'null')}catch{}
   const before=await read();
+  if(pending && (JSON.stringify(pending.record)!==JSON.stringify(record)||!!pending.deleting!==deleting))throw Error('มีรายการรอตรวจสอบ กรุณาเชื่อมต่อใหม่ก่อนทำรายการอื่น');
   if(pending){if(before.events.has(pending.eventId)){sessionStorage.removeItem(pendingKey());return before.rows}if(JSON.stringify(pending.record)!==JSON.stringify(record))throw Error('มีรายการรอตรวจสอบจากการบันทึกครั้งก่อน กรุณาเชื่อมต่อใหม่เพื่อตรวจสอบผล');record=pending.record;baseVersion=pending.baseVersion}
-  const current=before.rows.find(x=>x.id===record.id);
+  const current=before.latest.get(record.id);
   if((current?._version||null)!==(baseVersion||null))throw Error('รายการนี้ถูกแก้ไขจากที่อื่นแล้ว กรุณาดึงข้อมูลล่าสุดแล้วเปิดรายการใหม่');
-  const eventId=pending?.eventId||crypto.randomUUID(),sold=record.made-record.left,revenue=Math.round(sold*record.price*100)/100,cost=Math.round((record.cost+record.extra)*100)/100;
-  pending=pending||{eventId,record,baseVersion};sessionStorage.setItem(pendingKey(),JSON.stringify(pending));
+  if(deleting&&!current)throw Error('ไม่พบรายการที่จะลบ กรุณาดึงข้อมูลล่าสุด');
+  const eventId=pending?.eventId||((deleting?'deleted:':'')+crypto.randomUUID()),sold=record.made-record.left,revenue=Math.round(sold*record.price*100)/100,cost=Math.round((record.cost+record.extra)*100)/100;
+  pending=pending||{eventId,record,baseVersion,deleting};sessionStorage.setItem(pendingKey(),JSON.stringify(pending));
   const values=[[record.id,eventId,new Date().toISOString(),record.date,record.product,record.buyqty??'',record.buyunit,record.cost,record.extra,record.made,record.price,record.left,sold,revenue,cost,Math.round((revenue-cost)*100)/100,record.memo]];
   const result=await api('/values/'+encodeURIComponent("'"+tabName+"'!A:Q")+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS','POST',{majorDimension:'ROWS',values});
   if(result.updates?.updatedRows!==1)throw Error('ยังยืนยันการบันทึกไม่ได้ กรุณาตรวจข้อมูลล่าสุดก่อนทำรายการอื่น');
-  sessionStorage.removeItem(pendingKey());const next={...record,_version:eventId};return before.rows.filter(x=>x.id!==record.id).concat(next);
+  sessionStorage.removeItem(pendingKey());const next={...record,_version:eventId};return before.rows.filter(x=>x.id!==record.id).concat(deleting?[]:[next]);
  }
  async function recoverPending(){let p;try{p=JSON.parse(sessionStorage.getItem(pendingKey())||'null')}catch{}if(!p)return null;const before=await read();if(before.events.has(p.eventId)){sessionStorage.removeItem(pendingKey());return null}return p}
  return{getConfig,saveConfig,configured,authorize,initialize,read,save,disconnect,recoverPending,parseRows,get name(){return sheetName},get ready(){return ready}};
@@ -88,6 +90,7 @@ async function activateCloud(data,name){
  const pending=await WandeeCloud.recoverPending();
  if(appMode==='demo'){dirty=false;editId=null;draftId=null;$('saleform').reset()}
  appMode='cloud';rows=data;$('setupDialog').close();$('initarea').hidden=true;$('login').hidden=true;$('app').hidden=false;document.body.classList.remove('login-screen');cloudUi();
+ if(pending?.deleting){page('home');openDelete(pending.record,pending.baseVersion,true);return}
  if(pending){const r=pending.record;for(const k of ['product','cost','buyqty','buyunit','extra','memo','made','price','left'])$(k).value=r[k]??'';$('entrydate').value=r.date;editId=pending.baseVersion?r.id:null;draftId=r.id;editVersion=pending.baseVersion;dirty=true;setStep(2);page('record');toast('มีรายการที่ยังยืนยันผลไม่ได้ กดบันทึกเพื่อตรวจสอบก่อนส่งซ้ำ');return}
  page(dirty?'record':'home');toast('เชื่อมต่อแล้ว: '+name)
 }
